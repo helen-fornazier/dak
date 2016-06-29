@@ -128,7 +128,7 @@ class SignatureAndHashesCheck(Check):
         changes = upload.changes
         if not changes.valid_signature:
             raise Reject("Signature for .changes not valid.")
-        self.check_replay(upload)
+        #self.check_replay(upload)
         self._check_hashes(upload, changes.filename, changes.files.itervalues())
 
         source = None
