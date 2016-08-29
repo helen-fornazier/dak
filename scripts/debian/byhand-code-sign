@@ -22,13 +22,16 @@ error() {
 
 export OPENSSL_CONF=/dev/null
 
-# Read dak configuration for security or main archive
+# Read dak configuration for security or main archive.
+# Also determine subdirectory for the suite.
 case "$0" in
     /srv/security-master.debian.org/*)
 	configdir="/srv/security-master.debian.org/dak/config/debian-security"
+	suitedir="$SUITE/updates"
 	;;
     /srv/ftp-master.debian.org/*)
 	configdir="/srv/ftp-master.debian.org/dak/config/debian"
+	suitedir="$SUITE"
 	;;
     *)
 	error "$0: Can't tell if security or not"
@@ -44,7 +47,7 @@ for var in EFI_BINARY_PRIVKEY EFI_BINARY_CERT \
 	test -n "${!var}" || error "$var is empty in configuration"
 done
 
-TARGET="$ftpdir/dists/$SUITE/main/code-sign/"
+TARGET="$ftpdir/dists/$suitedir/main/code-sign/"
 OUT_TARBALL="$TARGET/${IN_TARBALL##*/}"
 OUT_TARBALL="${OUT_TARBALL%.tar.xz}_sigs.tar.xz"
 
