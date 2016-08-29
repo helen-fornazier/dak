@@ -23,12 +23,15 @@ error() {
 export OPENSSL_CONF=/dev/null
 
 # Read dak configuration for security or main archive
-case "$SUITE" in
-    *-security)
+case "$0" in
+    /srv/security-master.debian.org/*)
 	configdir="/srv/security-master.debian.org/dak/config/debian-security"
 	;;
-    *)
+    /srv/ftp-master.debian.org/*)
 	configdir="/srv/ftp-master.debian.org/dak/config/debian"
+	;;
+    *)
+	error "$0: Can't tell if security or not"
 	;;
 esac
 . "$configdir/vars"
