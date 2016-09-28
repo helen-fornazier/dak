@@ -1,0 +1,135 @@
+#!/bin/bash
+
+set -u
+set -e
+set -o pipefail
+
+if [ $# -lt 1 ]; then
+	echo "Usage: $0 config_file"
+	exit 1
+fi
+
+# This script receives a .tar.xz file from stdin and generates a .tar.xz in stdout
+# Prevent any possible output to stdout, recirect them to stderr instead
+# Save STDOUT in FD 3
+exec 3>&1
+# Redirect STDOUT to STDERR
+exec 1>&2
+
+CONFIG_FILE="$1"
+
+error() {
+	echo >&2 "E: $*"
+	exit 1
+}
+
+export OPENSSL_CONF=/dev/null
+
+# Read and trivially validate our configuration
+. "$CONFIG_FILE"
+for var in EFI_BINARY_PRIVKEY EFI_BINARY_CERT \
+	   LINUX_SIGNFILE LINUX_MODULE_PRIVKEY LINUX_MODULE_CERT; do
+	test -v "$var" || error "$var is not defined in configuration"
+	test -n "${!var}" || error "$var is empty in configuration"
+done
+
+# If we fail somewhere, cleanup the temporary directories
+IN_DIR=
+OUT_DIR=
+CERT_DIR=
+cleanup() {
+	for dir in "$IN_DIR" "$OUT_DIR" "$CERT_DIR"; do
+		test -z "$dir" || rm -rf "$dir"
+	done
+}
+trap cleanup EXIT
+
+# Extract the data from stdin into the input directory
+IN_DIR="$(mktemp -td byhand-code-sign-in.XXXXXX)"
+tar xJ --directory="$IN_DIR" <&0
+
+case "$EFI_BINARY_PRIVKEY" in
+    pkcs11:*)
+	# Translate from OpenSSL PKCS#11 enigne syntax to pesign parameters
+	# See: https://sources.debian.net/src/engine-pkcs11/0.2.2-1/src/engine_pkcs11.c
+	pkcs11_pin_value=
+	old_IFS="$IFS"
+	IFS=';'
+	for kv in ${EFI_BINARY_PRIVKEY#pkcs11:}; do
+		case "$kv" in
+		    token=*)
+			pkcs11_token="${kv#*=}"
+			;;
+		    object=*)
+			pkcs11_object="${kv#*=}"
+			;;
+		    pin-value=*)
+			pkcs11_pin_value="${kv#*=}"
+			;;
+		esac
+	done
+	IFS="$old_IFS"
+	unset old_IFS
+	# TODO: unlock it
+	PESIGN_PARAMS=(-t "$pkcs11_token" -c "$pkcs11_object")
+	;;
+    *)
+	# Create certificate store for pesign
+	CERT_DIR="$(mktemp -td byhand-code-sign-cert.XXXXXX)"
+	mkdir "$CERT_DIR/store"
+	certutil -N --empty-password -d "$CERT_DIR/store"
+	openssl pkcs12 -export \
+		-inkey "$EFI_BINARY_PRIVKEY" -in "$EFI_BINARY_CERT" \
+		-out "$CERT_DIR/efi-image.p12" -passout pass: \
+		-name efi-image
+	pk12util -i "$CERT_DIR/efi-image.p12" -d "$CERT_DIR/store" -K '' -W ''
+	PESIGN_PARAMS=(-n "$CERT_DIR/store" -c efi-image)
+	;;
+esac
+
+# Create hierarchy of detached signatures in parallel to the uploaded files
+OUT_DIR="$(mktemp -td byhand-code-sign-out.XXXXXX)"
+while read filename; do
+	mkdir -p "$OUT_DIR/${filename%/*}"
+	case "${filename##*/}" in
+	    *.efi | vmlinuz-*)
+		if [ -v pkcs11_pin_value ]; then
+			"${0%/*}/byhand-code-sign-user-exp" "$IN_DIR/$filename" "$OUT_DIR/$filename.sig" "$pkcs11_pin_value" ${PESIGN_PARAMS[@]}
+		else
+			pesign -i "$IN_DIR/$filename" \
+			       --export-signature "$OUT_DIR/$filename.sig" --sign \
+			       -d sha256 "${PESIGN_PARAMS[@]}"
+		fi
+		;;
+	    *.ko)
+		"$LINUX_SIGNFILE" -d sha256 "$LINUX_MODULE_PRIVKEY" \
+			"$LINUX_MODULE_CERT" "$IN_DIR/$filename"
+		mv "$IN_DIR/$filename.p7s" "$OUT_DIR/$filename.sig"
+		;;
+	    *)
+		echo >&2 "W: Not signing unrecognised file: $filename"
+		continue
+		;;
+	esac
+	if [ "${#filename}" -gt 60 ]; then
+		filename_trunc="...${filename:$((${#filename} - 57)):57}"
+	else
+		filename_trunc="$filename"
+	fi
+	printf 'I: Signed %-60s\r' "$filename_trunc"
+done < <(find "$IN_DIR" -type f -printf '%P\n')
+
+# Clear last progress message
+printf '%-70s\r' ''
+
+# Restore STDOUT from FD 3
+exec 1>&3
+
+# Build tarball of signatures
+chmod -R a+rX "$OUT_DIR"
+tar -cJf - --directory="$OUT_DIR" .
+
+trap - EXIT
+cleanup
+
+exit 0
