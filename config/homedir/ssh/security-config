@@ -19,3 +19,11 @@ Host morgue-sync
   Hostname stabile.debian.org
   User dak
   IdentityFile /srv/security-master.debian.org/s3kr1t/push_morgue
+
+Host dsigning-box
+  Hostname localhost
+  User codesign
+
+Host sig-storage
+  Hostname coccia.debian.org
+  User codesign

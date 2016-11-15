@@ -1,0 +1,26 @@
+#!/bin/bash
+
+set -u
+set -e
+set -o pipefail
+
+if [ $# -lt 5 ]; then
+	echo "Usage: $0 filename version arch changes_file suite"
+	exit 1
+fi
+
+IN_TARBALL="$1"	# Tarball to read, compressed with xz
+VERSION="$2"
+ARCH="$3"
+CHANGES="$4"	# Changes file for the upload
+SUITE="$5"
+
+# Generate the detached signatures and Transfer the signatures where DDs have
+# NOTE: the exact command is configured in the authorized_keys from dsigning-box
+# 	and sig-storeage hosts
+# Ex:
+# 	command="secure-boot-code-sign",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,from="localhost" ssh-rsa AAA... dak@localhost"
+# 	command="cat > /dir/for/storing/sigs/${SSH_ORIGINAL_COMMAND%.tar.xz}.sigs.tar.xz",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,from="localhost" ssh-rsa AAA... dak@localhost"
+ssh dsigning-box < "$IN_TARBALL" | ssh sig-storage "${IN_TARBALL##*/}"
+
+echo "Signatures transfered to sig-storage"
