@@ -20,6 +20,10 @@ error() {
 	exit 1
 }
 
+
+echo "BBBBBBBBBBB In Script BBBBBBBBBBBBBBBBBBB"
+echo $IN_TARBALL
+
 # Read dak configuration for security or main archive.
 # Also determine subdirectory for the suite.
 case "$0" in
@@ -37,6 +41,7 @@ case "$0" in
 esac
 . "$configdir/vars"
 
+ftpdir="/srv/dak/ftp" # TODO: remove this line when submittin !!!!!!!!!!!!!!!!
 TARGET="$ftpdir/dists/$suitedir/main/code-sign/"
 OUT_TARBALL="$TARGET/${IN_TARBALL##*/}"
 OUT_TARBALL="${OUT_TARBALL%.tar.xz}_sigs.tar.xz"
