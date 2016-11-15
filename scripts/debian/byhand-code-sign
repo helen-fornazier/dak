@@ -1,0 +1,67 @@
+#!/bin/bash
+
+set -u
+set -e
+set -o pipefail
+
+if [ $# -lt 5 ]; then
+	echo "Usage: $0 filename version arch changes_file suite"
+	exit 1
+fi
+
+IN_TARBALL="$1"	# Tarball to read, compressed with xz
+VERSION="$2"
+ARCH="$3"
+CHANGES="$4"	# Changes file for the upload
+SUITE="$5"
+
+error() {
+	echo >&2 "E: $*"
+	exit 1
+}
+
+# Read dak configuration for security or main archive.
+# Also determine subdirectory for the suite.
+case "$0" in
+    /srv/security-master.debian.org/*)
+	configdir="/srv/security-master.debian.org/dak/config/debian-security"
+	suitedir="$SUITE/updates"
+	;;
+    /srv/ftp-master.debian.org/*)
+	configdir="/srv/ftp-master.debian.org/dak/config/debian"
+	suitedir="$SUITE"
+	;;
+    *)
+	error "$0: Can't tell if security or not"
+	;;
+esac
+. "$configdir/vars"
+
+# cleanup the temporary directories on EXIT
+IN_DIR=
+cleanup() {
+	test -z "$IN_DIR" || rm -rf "$IN_DIR"
+}
+trap cleanup EXIT
+
+# Extract the data from stdin into the input directory
+IN_DIR="$(mktemp -td byhand-code-sign-in.XXXXXX)"
+tar xaf "$IN_TARBALL" --directory="$IN_DIR"
+
+# Check if tarball contain the changelog file
+if [ ! -f "$IN_DIR/changelog" ]; then
+	error "Can't find changelog file in $IN_TARBALL"
+fi
+
+TARGET="$ftpdir/dists/$suitedir/main/code-sign"
+OUT_TARBALL="$TARGET/$(sha256sum "$IN_DIR/changelog" | head -c 64)_$ARCH.tar.xz"
+
+# Check that this source/arch/version hasn't already been signed
+if [ -e "$OUT_TARBALL" ]; then
+	error "Signature tarball already exists: $OUT_TARBALL"
+fi
+
+mkdir -p "${OUT_TARBALL%/*}"
+
+sudo -u codesign "${0%/*}/byhand-code-sign-user" "$configdir/byhand-code-sign.conf" < "$IN_TARBALL" > "$OUT_TARBALL"
+echo "I: Created $OUT_TARBALL"
