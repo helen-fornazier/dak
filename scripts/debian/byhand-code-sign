@@ -35,33 +35,27 @@ case "$0" in
 	error "$0: Can't tell if security or not"
 	;;
 esac
-. "$configdir/vars"
 
-# cleanup the temporary directories on EXIT
-IN_DIR=
-cleanup() {
-	test -z "$IN_DIR" || rm -rf "$IN_DIR"
-}
-trap cleanup EXIT
+# Read and trivially validate our configuration
+. "$configdir/byhand-code-sign.conf"
+for var in DSIGN_BOX_HOST DSIGN_BOX_IMG_DIR \
+	SIG_STORAGE_HOST SIG_STORAGE_DIR; do
+	test -v "$var" || error "$var is not defined in configuration"
+	test -n "${!var}" || error "$var is empty in configuration"
+done
 
-# Extract the data from stdin into the input directory
-IN_DIR="$(mktemp -td byhand-code-sign-in.XXXXXX)"
-tar xaf "$IN_TARBALL" --directory="$IN_DIR"
+# Transfer file to dsigning-box
+rsync --checksum "$IN_TARBALL" "$DSIGN_BOX_HOST":"$DSIGN_BOX_IMG_DIR"
 
-# Check if tarball contain the changelog file
-if [ ! -f "$IN_DIR/changelog" ]; then
-	error "Can't find changelog file in $IN_TARBALL"
-fi
+# Generate the dettached signatures
+OUT_TARBALL=$("$DSIGN_BOX_HOST" "secure-boot-code-sign $IN_TARBALL")
 
-TARGET="$ftpdir/dists/$suitedir/main/code-sign"
-OUT_TARBALL="$TARGET/$(sha256sum "$IN_DIR/changelog" | head -c 64)_$ARCH.tar.xz"
+# Get the dettached signatures from dsigning-box
+rsync --checksum "$DSIGN_BOX_HOST":"$OUT_TARBALL" /tmp
+OUT_TARBALL="${OUT_TARBALL##*/}"
 
-# Check that this source/arch/version hasn't already been signed
-if [ -e "$OUT_TARBALL" ]; then
-	error "Signature tarball already exists: $OUT_TARBALL"
-fi
+# Transfer the signatures where DDs have access
+# FIXME: this is temporary, the signatures should stay in the signing box
+rsync --checksum /tmp/"$OUT_TARBALL" "$SIG_STORAGE_HOST":"$SIG_STORAGE_DIR"
 
-mkdir -p "${OUT_TARBALL%/*}"
-
-sudo -u codesign "${0%/*}/byhand-code-sign-user" "$configdir/byhand-code-sign.conf" < "$IN_TARBALL" > "$OUT_TARBALL"
-echo "I: Created $OUT_TARBALL"
+echo "I: Signatures created at $SIG_STORAGE_HOST:$SIG_STORAGE_DIR/$OUT_TARBALL"
