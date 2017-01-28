@@ -48,7 +48,7 @@ done
 rsync --checksum "$IN_TARBALL" "$DSIGN_BOX_HOST":"$DSIGN_BOX_IMG_DIR"
 
 # Generate the dettached signatures
-OUT_TARBALL=$("$DSIGN_BOX_HOST" "secure-boot-code-sign $IN_TARBALL")
+OUT_TARBALL=$(ssh "$DSIGN_BOX_HOST" "secure-boot-code-sign ${IN_TARBALL##*/}")
 
 # Get the dettached signatures from dsigning-box
 rsync --checksum "$DSIGN_BOX_HOST":"$OUT_TARBALL" /tmp
